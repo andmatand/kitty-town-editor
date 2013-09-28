@@ -21,7 +21,7 @@ function love.load()
 
     -- Load all images in the images folder
     IMAGES_PATH = 'images'
-    pallete = {tiles = {}}
+    palette = {tiles = {}}
     local index = 1
     for _, file in pairs(love.filesystem.enumerate(IMAGES_PATH)) do
         if file:sub(-4) == '.png' or file:sub(-4) == '.bmp' then
@@ -31,7 +31,8 @@ function love.load()
             local image = love.graphics.newImage(IMAGES_PATH .. '/' .. file)
             
             if image then
-                pallete.tiles[index] = {index = index,
+                print(name)
+                palette.tiles[index] = {index = index,
                                         name = name,
                                         image = image}
                 index = index + 1
@@ -39,7 +40,7 @@ function love.load()
         end
     end
 
-    if #pallete.tiles == 0 then
+    if #palette.tiles == 0 then
         print('In order to use this program, you must add images to the ' ..
               'images directory here.')
         love.event.quit()
@@ -51,16 +52,16 @@ function love.load()
     cursor = {focus = 'canvas',
               position = {x = 0, y = 0},
               state = 'draw'}
-    currentTile = pallete.tiles[1]
+    currentTile = palette.tiles[1]
     undoTable = {canvasStates = {}}
 end
 
-function ShowPallette()
+function ShowPalette()
     cursor.state = 'point'
-    cursor.focus = 'pallette'
+    cursor.focus = 'palette'
 end
 
-function HidePallette()
+function HidePalette()
     cursor.state = 'point'
     cusor.focus = 'canvas'
 end
@@ -140,9 +141,9 @@ function love.keypressed(key)
                 nextIndex = currentTile.index + 1
             end
 
-            if nextIndex > #pallete.tiles then nextIndex = 1 end
-            if nextIndex < 1 then nextIndex = #pallete.tiles end
-            currentTile = pallete.tiles[nextIndex]
+            if nextIndex > #palette.tiles then nextIndex = 1 end
+            if nextIndex < 1 then nextIndex = #palette.tiles end
+            currentTile = palette.tiles[nextIndex]
         end
     end
 
@@ -150,6 +151,10 @@ function love.keypressed(key)
         if ctrl then
             if key == 'z' then
                 Undo()
+            elseif key == 's' then
+                SaveRoom('testroom')
+            elseif key == 'o' then
+                LoadRoom('testroom')
             end
         end
 
@@ -166,7 +171,7 @@ function love.keypressed(key)
                 local _, _, fullscreen = love.graphics.getMode()
                 SetGraphicsMode(not fullscreen)
             elseif key == 'space' then
-                ShowPallette()
+                ShowPalette()
             end
 
             if key == 'return' then
@@ -179,10 +184,10 @@ function love.keypressed(key)
         end
     end
 
-    if cursor.focus == 'pallete' then
+    if cursor.focus == 'palette' then
         if (not ctrl) and (not shift) then
             if key == 'space' then
-                HidePallette()
+                HidePalette()
             end
         end
     end
@@ -469,7 +474,75 @@ function love.draw()
     --end
 end
 
-function SaveRoom()
-    for k, v in pairs(canvas.tiles) do
+function SaveRoom(filename)
+    local file = love.filesystem.newFile(filename)
+    file:open('w')
+
+    for _, tile in pairs(canvas.tiles) do
+        local line = ''
+        line = line .. tile.name .. ','
+        line = line .. tile.position.x .. ','
+        line = line .. tile.position.y .. ','
+
+        local flipHorizontal = (tile.flipHorizontal and '1' or '0')
+        line = line .. flipHorizontal .. ','
+
+        local flipVertical = (tile.flipVertical and '1' or '0')
+        line = line .. flipVertical
+        line = line .. '\n'
+
+        file:write(line)
     end
+
+    file:close()
+end
+
+function LoadRoom(filename)
+    local file = love.filesystem.newFile(filename)
+    file:open('r')
+
+    local tiles = {}
+    local i = 1
+    for line in file:lines() do
+        local tile = {position = {}}
+
+        local j = 1
+        for value in line:gmatch("[^,\n]+") do
+            if j == 1 then
+                tile.name = value
+
+                -- Find the palette tile that has this name
+                for _, paletteTile in pairs(palette.tiles) do
+                    if paletteTile.name == tile.name then
+                        tile.image = paletteTile.image
+                        break
+                    end
+                end
+
+                if not tile.image then
+                    print('error loading tile "' .. tile.name .. '": ' ..
+                          'name not found in palette')
+                    break
+                end
+            elseif j == 2 then
+                tile.position.x = tonumber(value)
+            elseif j == 3 then
+                tile.position.y = tonumber(value)
+            elseif j == 4 then
+                tile.flipHorizontal = (value == '1' and true or false)
+            elseif j == 5 then
+                tile.flipVertical = (value == '1' and true or false)
+            end
+
+            j = j + 1
+        end
+
+        tiles[i] = tile
+        i = i + 1
+    end
+
+    SaveStateForUndo()
+    canvas.tiles = tiles
+
+    file:close()
 end
