@@ -24,7 +24,7 @@ function love.load()
     pallete = {tiles = {}}
     local index = 1
     for _, file in pairs(love.filesystem.enumerate(IMAGES_PATH)) do
-        if file:sub(-4) == '.png' then
+        if file:sub(-4) == '.png' or file:sub(-4) == '.bmp' then
             local extensionStart = file:find('%..+$')
             local name = file:sub(0, extensionStart - 1)
 
