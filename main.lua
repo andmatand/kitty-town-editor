@@ -22,14 +22,27 @@ function love.load()
     -- Load all images in the images folder
     IMAGES_PATH = 'images'
     pallete = {tiles = {}}
-    for i, file in pairs(love.filesystem.enumerate(IMAGES_PATH)) do
-        local extensionStart = file:find('%..+$')
-        local name = file:sub(0, extensionStart - 1)
+    local index = 1
+    for _, file in pairs(love.filesystem.enumerate(IMAGES_PATH)) do
+        if file:sub(-4) == '.png' then
+            local extensionStart = file:find('%..+$')
+            local name = file:sub(0, extensionStart - 1)
 
-        pallete.tiles[i] = {index = i,
-                            name = name,
-                            image = love.graphics.newImage(IMAGES_PATH ..
-                                                           '/' .. file)}
+            local image = love.graphics.newImage(IMAGES_PATH .. '/' .. file)
+            
+            if image then
+                pallete.tiles[index] = {index = index,
+                                        name = name,
+                                        image = image}
+                index = index + 1
+            end
+        end
+    end
+
+    if #pallete.tiles == 0 then
+        print('In order to use this program, you must add images to the ' ..
+              'images directory here.')
+        love.event.quit()
     end
 
     zoom = 1
