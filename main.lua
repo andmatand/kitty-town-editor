@@ -1,10 +1,13 @@
+require('mask')
+
 WINDOW_W = 640
 WINDOW_H = 480
 FULLSCREEN_W = 1600
 FULLSCREEN_H = 900
 MIN_ZOOM = 1
-MAX_ZOOM = 8
+MAX_ZOOM = 12
 CURSOR_SCALE = 2
+FONT_SCALE = 2
 
 function love.load()
     SetGraphicsMode(false)
@@ -14,26 +17,39 @@ function love.load()
 
     -- Load the cursors
     cursorImages = {}
-    for _, name in pairs({'erase', 'grab'}) do
-        cursorImages[name] = love.graphics.newImage('res/img/cursor-' ..
+    for _, name in pairs({'erase', 'grab', 'send-to-front', 'send-to-back'}) do
+        cursorImages[name] = love.graphics.newImage('res/img/cursor/' ..
                                                     name .. '.png')
     end
+
+    -- Load the font
+    local img = love.graphics.newImage('res/font/cga.png')
+    local glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789:.,\'"!?+-_'
+    font = love.graphics.newImageFont(img, glyphs)
+    love.graphics.setFont(font)
 
     -- Load all images in the images folder
     IMAGES_PATH = 'images'
     palette = {tiles = {}}
     local index = 1
-    for _, file in pairs(love.filesystem.enumerate(IMAGES_PATH)) do
-        if file:sub(-4) == '.png' or file:sub(-4) == '.bmp' then
-            local extensionStart = file:find('%..+$')
-            local name = file:sub(0, extensionStart - 1)
+    for _, filename in pairs(love.filesystem.enumerate(IMAGES_PATH)) do
+        if filename:sub(-4) == '.png' or filename:sub(-4) == '.bmp' then
+            local extensionStart = filename:find('%..+$')
+            local name = filename:sub(0, extensionStart - 1)
+            local fullPath = IMAGES_PATH .. '/' .. filename
+            local imageData = love.image.newImageData(fullPath)
 
-            local image = love.graphics.newImage(IMAGES_PATH .. '/' .. file)
+            -- If the imageData was loaded successfully
+            if imageData then
+                -- Create a collision mask from the image data
+                local mask = CreateCollisionMask(imageData)
+
+                -- Create a drawable image from the image data
+                local image = love.graphics.newImage(imageData)
             
-            if image then
-                print(name)
                 palette.tiles[index] = {index = index,
                                         name = name,
+                                        mask = mask,
                                         image = image}
                 index = index + 1
             end
@@ -48,6 +64,7 @@ function love.load()
 
     zoom = 1
     canvas = {position = {x = 0, y = 0},
+              size = {w = 100, h = 100},
               tiles = {}}
     cursor = {focus = 'canvas',
               position = {x = 0, y = 0},
@@ -159,10 +176,14 @@ function love.keypressed(key)
         end
 
         if (not ctrl) and (not shift) then
-            if key == 'd' then
+            if key == 'b' then
+                cursor.state = 'send-to-back'
+            elseif key == 'd' then
                 cursor.state = 'draw'
             elseif key == 'e' then
                 cursor.state = 'erase'
+            elseif key == 'f' then
+                cursor.state = 'send-to-front'
             elseif key == 'v' then
                 currentTile.flipVertical = not currentTile.flipVertical
             elseif key == 'h' then
@@ -189,6 +210,14 @@ function love.keypressed(key)
             if key == 'space' then
                 HidePalette()
             end
+        end
+    end
+end
+
+function love.keyreleased(key)
+    if canvasMovement then
+        if key == 'lctrl' or key == 'rctrl' then
+            EndCanvasMovement()
         end
     end
 end
@@ -287,7 +316,12 @@ function GetTileIndexUnderCursor()
                             CURSOR_SCALE, CURSOR_SCALE,
                             tile.position.x, tile.position.y,
                             tile.image:getWidth(), tile.image:getHeight()) then
-            highestTileIndex = i
+            if tile.mask:IsCollision(cursorPos.x - tile.position.x,
+                                     cursorPos.y - tile.position.y,
+                                     tile.flipHorizontal,
+                                     tile.flipVertical) then
+                highestTileIndex = i
+            end
         end
     end
 
@@ -303,31 +337,62 @@ function EraseTileUnderCursor()
     end
 end
 
+function SendTileUnderCursorToBack()
+    local tile = GetTileIndexUnderCursor()
+
+    if tile then
+        SaveStateForUndo()
+        table.insert(canvas.tiles, 1, table.remove(canvas.tiles, tile))
+    end
+end
+
+function SendTileUnderCursorToFront()
+    local tile = GetTileIndexUnderCursor()
+
+    if tile then
+        SaveStateForUndo()
+        table.insert(canvas.tiles, table.remove(canvas.tiles, tile))
+    end
+end
+
 function love.mousepressed(x, y, button)
-    -- If ctrl is pressed
+    local ctrl
     if love.keyboard.isDown('lctrl') or love.keyboard.isDown('rctrl') then
-        if button == 'wd' then
-            SetZoom(zoom - 1)
-        elseif button == 'wu' then
-            SetZoom(zoom + 1)
-        end
-
-        if button == 'l' then
-            StartCanvasMovement()
-        end
-
-    -- If no modifier keys are pressed
+        ctrl = true
     else
-        if button == 'l' then
-            if cursor.focus == 'canvas' then
-                if cursor.state == 'draw' then
-                    PlaceTileUnderCursor(currentTile)
-                elseif cursor.state == 'erase' then
-                    EraseTileUnderCursor()
-                end
+        ctrl = false
+    end
+
+    if cursor.focus == 'canvas' then
+        -- If ctrl is pressed
+        if ctrl then
+            if button == 'wd' then
+                SetZoom(zoom - 1)
+            elseif button == 'wu' then
+                SetZoom(zoom + 1)
             end
-        elseif button == 'm' then
-            StartCanvasMovement()
+
+            if button == 'l' then
+                StartCanvasMovement()
+            end
+
+        -- If no modifier keys are pressed
+        else
+            if button == 'l' then
+                if cursor.focus == 'canvas' then
+                    if cursor.state == 'draw' then
+                        PlaceTileUnderCursor(currentTile)
+                    elseif cursor.state == 'erase' then
+                        EraseTileUnderCursor()
+                    elseif cursor.state == 'send-to-back' then
+                        SendTileUnderCursorToBack()
+                    elseif cursor.state == 'send-to-front' then
+                        SendTileUnderCursorToFront()
+                    end
+                end
+            elseif button == 'm' then
+                StartCanvasMovement()
+            end
         end
     end
 end
@@ -381,12 +446,12 @@ function MoveCursorWithMouse()
         cursor.position.y = mouseCursorPosition.y
     end
 end
-
+    
 function love.update()
     -- Make sure the canvas is aligned to the grid
     AlignToGrid(canvas.position)
-    
-    MoveCursorWithMouse()
+
+    UpdateCursor()
 
     if canvasMovement then
         if love.mouse.isDown('m') or
@@ -410,8 +475,37 @@ function MoveMouseToCursor()
 end
 
 function DrawCanvas()
+    love.graphics.setColor(255, 255, 255, 255)
+
     for _, tile in pairs(canvas.tiles) do
         DrawTile(tile)
+    end
+end
+
+function UpdateCursor()
+    MoveCursorWithMouse()
+
+    cursor.origin = nil
+
+    if cursor.state == 'draw' then
+        cursor.image = currentTile.image
+        cursor.origin = {x = math.floor(currentTile.image:getWidth() / 2),
+                         y = math.floor(currentTile.image:getHeight() / 2)}
+    else
+        cursor.image = cursorImages[cursor.state]
+
+        if cursor.state == 'send-to-back' or
+           cursor.state == 'send-to-front' or
+           cursor.state == 'erase' then
+            cursor.origin = {x = -zoom / 2, y = -zoom / 2}
+        end
+    end
+
+    -- If the cursor origin has not been specifically set
+    if not cursor.origin then
+        -- Use the center as the default origin
+        cursor.origin = {x = math.floor(cursor.image:getWidth() / 2),
+                         y = math.floor(cursor.image:getHeight() / 2)}
     end
 end
 
@@ -420,39 +514,39 @@ function DrawCursor()
         love.graphics.push()
         love.graphics.scale(zoom, zoom)
 
-        local origin = {x = math.floor(currentTile.image:getWidth() / 2),
-                        y = math.floor(currentTile.image:getHeight() / 2)}
-
-        DrawTile(currentTile, cursor.position, origin)
+        DrawTile(currentTile, cursor.position, cursor.origin)
 
         love.graphics.pop()
         return
     end
 
-    local cursorImage
-    local cursorOrigin = {}
-    if cursor.state == 'erase' then
-        cursorImage = cursorImages['erase']
-    elseif cursor.state == 'grab' then
-        cursorImage = cursorImages['grab']
-    end
+    if not cursor.image then return end
 
-    -- If the cursor origin has not been specifically set
-    if #cursorOrigin == 0 then
-        -- Use the center as the default origin
-        cursorOrigin.x = math.floor(cursorImage:getWidth() / 2)
-        cursorOrigin.y = math.floor(cursorImage:getHeight() / 2)
+    -- Draw a rectangle around the pixel under the cursor
+    love.graphics.setLine(1, 'rough')
+    if cursor.flash then
+        cursor.flash = false
+        love.graphics.setColor(0, 0, 0, 255)
+    else
+        cursor.flash = true
+        love.graphics.setColor(255, 255, 255, 255)
     end
+    --love.graphics.setBlendMode('premultiplied')
+    love.graphics.rectangle('line',
+                            cursor.position.x * zoom + 1,
+                            cursor.position.y * zoom + 1,
+                            zoom - 1, zoom - 1)
+    --love.graphics.setBlendMode('alpha')
 
-    love.graphics.draw(cursorImage,
+
+    love.graphics.setColor(255, 255, 255, 255)
+    love.graphics.draw(cursor.image,
                        cursor.position.x * zoom, cursor.position.y * zoom,
                        0, CURSOR_SCALE, CURSOR_SCALE,
-                       cursorOrigin.x, cursorOrigin.y)
+                       cursor.origin.x, cursor.origin.y)
 end
 
 function love.draw()
-    love.graphics.setColor(255, 255, 255)
-
     love.graphics.push()
     love.graphics.translate(canvas.position.x, canvas.position.y)
     love.graphics.scale(zoom, zoom)
@@ -461,17 +555,22 @@ function love.draw()
 
     DrawCursor()
 
-    --local cursorPos = GetCursorPositionOnCanvas()
-    --love.graphics.setColor(255, 0, 0)
-    --love.graphics.rectangle('line', cursorPos.x, cursorPos.y,
+    -- DEBUG: draw cursor position
+    --love.graphics.push()
+    --love.graphics.scale(CURSOR_SCALE, CURSOR_SCALE)
+    --love.graphics.setColor(255, 0, 0, 255)
+    --love.graphics.rectangle('fill', cursor.position.x, cursor.position.y,
     --                        CURSOR_SCALE, CURSOR_SCALE)
+    --love.graphics.pop()
 
-    --if #canvas.tiles > 0 then
-    --    local tile = canvas.tiles[1]
-    --    love.graphics.setColor(0, 255, 0)
-    --    love.graphics.rectangle('line', tile.position.x, tile.position.y,
-    --                            tile.image:getWidth(), tile.image:getHeight())
-    --end
+
+    -- DEBUG: test the font
+    --love.graphics.push()
+    --love.graphics.scale(FONT_SCALE, FONT_SCALE)
+    --love.graphics.setColor(255, 255, 255, 255)
+    --local y = (love.graphics.getHeight() / FONT_SCALE) - font:getHeight()
+    --love.graphics.print('TESTING 123...', 0, y)
+    --love.graphics.pop()
 end
 
 function SaveRoom(filename)
@@ -515,6 +614,7 @@ function LoadRoom(filename)
                 for _, paletteTile in pairs(palette.tiles) do
                     if paletteTile.name == tile.name then
                         tile.image = paletteTile.image
+                        tile.mask = paletteTile.mask
                         break
                     end
                 end
