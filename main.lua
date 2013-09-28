@@ -522,6 +522,7 @@ function LoadRoom(filename)
                 if not tile.image then
                     print('error loading tile "' .. tile.name .. '": ' ..
                           'name not found in palette')
+                    tile = nil
                     break
                 end
             elseif j == 2 then
@@ -537,8 +538,10 @@ function LoadRoom(filename)
             j = j + 1
         end
 
-        tiles[i] = tile
-        i = i + 1
+        if tile then
+            tiles[i] = tile
+            i = i + 1
+        end
     end
 
     SaveStateForUndo()
